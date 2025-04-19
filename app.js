@@ -1,19 +1,25 @@
 // Nonaktifkan Metamask untuk hindari error inpage.js
 window.ethereum = null;
 
-// Firebase Config (ganti dengan config dari proyek Firebase lfarm-e11ad)
+// Firebase Config (GANTI DENGAN CONFIG DARI FIREBASE CONSOLE)
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "lfarm-e11ad.firebaseapp.com",
-  projectId: "lfarm-e11ad",
-  storageBucket: "lfarm-e11ad.firebasestorage.app",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
-  measurementId: "YOUR_MEASUREMENT_ID"
-};
+    apiKey: "AIzaSyCTYu51tAUlNS_11gcIA6yzNS1ziUzmglU",
+    authDomain: "lfarm-e11ad.firebaseapp.com",
+    projectId: "lfarm-e11ad",
+    storageBucket: "lfarm-e11ad.firebasestorage.app",
+    messagingSenderId: "240256024936",
+    appId: "1:240256024936:web:b50a13187c05102c0e56dd",
+    measurementId: "G-SYCJT5KJW9"
+  };
 
 // Inisialisasi Firebase
-firebase.initializeApp(firebaseConfig);
+try {
+  firebase.initializeApp(firebaseConfig);
+  console.log('Firebase initialized successfully');
+} catch (error) {
+  console.error('Error initializing Firebase:', error);
+  alert('Failed to initialize Firebase. Please check API Key and try again.');
+}
 const db = firebase.firestore();
 const auth = firebase.auth();
 
@@ -22,6 +28,7 @@ db.collection('users').get().then(snapshot => {
   console.log('Firestore connected, collections size:', snapshot.size);
 }).catch(error => {
   console.error('Firestore connection error:', error);
+  alert('Failed to connect to Firestore: ' + error.message);
 });
 
 // Fungsi Login
@@ -74,6 +81,9 @@ window.login = async function login() {
         break;
       case 'auth/too-many-requests':
         message += 'Too many attempts, try again later';
+        break;
+      case 'auth/api-key-not-valid.-please-pass-a-valid-api-key.':
+        message += 'Invalid API Key. Please contact administrator.';
         break;
       default:
         message += error.message;
@@ -129,7 +139,6 @@ window.register = async function register() {
     }
 
     console.log('Register attempt:', { username, email });
-    // Tambah ke pendingUsers
     await db.collection('pendingUsers').add({
       username,
       email,
@@ -176,6 +185,9 @@ window.resetPassword = async function resetPassword() {
         break;
       case 'auth/user-not-found':
         message += 'Email not found';
+        break;
+      case 'auth/api-key-not-valid.-please-pass-a-valid-api-key.':
+        message += 'Invalid API Key. Please contact administrator.';
         break;
       default:
         message += error.message;
@@ -582,10 +594,6 @@ window.removeUser = async function removeUser(userId, username) {
     // Hapus data user dari Firestore
     await db.collection('users').doc(userId).delete();
     alert(`User ${username} removed successfully`);
-
-    // Catatan: Menghapus user dari Firebase Authentication memerlukan Admin SDK.
-    // Untuk keamanan, kita hanya hapus dari Firestore di sini.
-    // Jika ingin hapus dari Auth, gunakan Firebase Admin SDK di backend.
     showPendingUsers();
   } catch (error) {
     console.error('Error removing user:', error);
@@ -709,7 +717,6 @@ async function loadPublicProjects() {
 // Inisialisasi
 document.addEventListener('DOMContentLoaded', () => {
   try {
-    // Cek status autentikasi
     auth.onAuthStateChanged(async (user) => {
       if (user) {
         const userDoc = await db.collection('users').doc(user.uid).get();
