@@ -1,965 +1,746 @@
-// Firebase configuration (hardcoded untuk simpel, nanti pindah ke Vercel env vars)
+// Nonaktifkan Metamask untuk hindari error inpage.js
+window.ethereum = null;
+
+// Firebase Config (ganti dengan config dari proyek Firebase lfarm-e11ad)
 const firebaseConfig = {
-    apiKey: "AIzaSyCTYu51tAUlNS_11gcIA6yzNS1ziUzmglU",
-    authDomain: "lfarm-e11ad.firebaseapp.com",
-    projectId: "lfarm-e11ad",
-    storageBucket: "lfarm-e11ad.firebasestorage.app",
-    messagingSenderId: "240256024936",
-    appId: "1:240256024936:web:b50a13187c05102c0e56dd",
-    measurementId: "G-SYCJT5KJW9"
-  };
-
-// Initialize Firebase
-const app = firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-
-// State variables
-let isAdmin = false;
-let currentUser = '';
-let projects = [];
-let editingProjectId = null;
-let currentUserData = null;
-let historyStack = [];
-let visitorCount = 0;
-
-// Sanitize input to prevent basic XSS
-function sanitizeInput(input) {
-    const div = document.createElement('div');
-    div.textContent = input;
-    return div.innerHTML;
-}
-
-// Load visitor count and public projects on page load
-window.onload = async function () {
-    const savedUser = localStorage.getItem('currentUser');
-    const savedVisitorCount = localStorage.getItem('visitorCount');
-    if (savedVisitorCount) {
-        visitorCount = parseInt(savedVisitorCount);
-    }
-    visitorCount++;
-    localStorage.setItem('visitorCount', visitorCount);
-    document.getElementById('visitorCounter').textContent = `Visitors: ${visitorCount}`;
-
-    // Load projects from Firestore
-    await loadProjects();
-
-    // Display public projects on page load
-    await displayPublicProjectsPreview();
-
-    if (savedUser) {
-        const q = db.collection('users').where('username', '==', savedUser);
-        const userSnapshot = await q.get();
-        if (!userSnapshot.empty) {
-            const user = userSnapshot.docs[0].data();
-            currentUser = user.username;
-            isAdmin = user.isAdmin;
-            currentUserData = { ...user, id: userSnapshot.docs[0].id };
-            document.getElementById('loginContainer').style.display = 'none';
-            document.getElementById('publicProjectsPreview').style.display = 'none';
-            document.getElementById('actionsContainer').style.display = 'block';
-            document.getElementById('backButton').style.display = 'block';
-            document.getElementById('profile').style.display = 'block';
-            document.getElementById('logoutButton').style.display = 'block';
-            document.getElementById('profileUsername').textContent = currentUser;
-
-            if (currentUser === "admin") {
-                document.getElementById('pendingUsersButton').style.display = 'inline-block';
-            }
-
-            updateToolsFilterButton();
-            historyStack.push('actions');
-        }
-    }
+  apiKey: "YOUR_API_KEY",
+  authDomain: "lfarm-e11ad.firebaseapp.com",
+  projectId: "lfarm-e11ad",
+  storageBucket: "lfarm-e11ad.firebasestorage.app",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
+  measurementId: "YOUR_MEASUREMENT_ID"
 };
 
-// Function to load projects from Firestore
-async function loadProjects() {
-    projects = [];
-    const snapshot = await db.collection('projects').get();
-    snapshot.forEach(doc => {
-        projects.push({ id: doc.id, ...doc.data() });
-    });
-}
+// Inisialisasi Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
 
-// Function to update the Tools filter button state
-function updateToolsFilterButton() {
-    const toolsBox = document.getElementById('toolsBox');
-    if (!currentUserData || !currentUserData.allowedTools) {
-        toolsBox.classList.add('disabled');
-    } else {
-        toolsBox.classList.remove('disabled');
+// Cek koneksi Firestore
+db.collection('users').get().then(snapshot => {
+  console.log('Firestore connected, collections size:', snapshot.size);
+}).catch(error => {
+  console.error('Firestore connection error:', error);
+});
+
+// Fungsi Login
+window.login = async function login() {
+  try {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value.trim();
+    const loginMessage = document.getElementById('loginMessage');
+    loginMessage.textContent = '';
+
+    if (!email || !password) {
+      loginMessage.textContent = 'Please enter email and password';
+      return;
     }
-}
 
-// Function to hide all containers
-function hideAllContainers() {
+    console.log('Login attempt:', { email });
+    const userCredential = await auth.signInWithEmailAndPassword(email, password);
+    const user = userCredential.user;
+    console.log('Firebase Auth user:', user.uid);
+
+    // Ambil data user dari Firestore
+    const userDoc = await db.collection('users').doc(user.uid).get();
+    if (!userDoc.exists) {
+      loginMessage.textContent = 'User data not found';
+      await auth.signOut();
+      return;
+    }
+
+    const userData = { id: user.uid, ...userDoc.data() };
+    localStorage.setItem('user', JSON.stringify(userData));
+    document.getElementById('profileUsername').textContent = userData.username;
     document.getElementById('loginContainer').style.display = 'none';
-    document.getElementById('registerContainer').style.display = 'none';
-    document.getElementById('resetPasswordContainer').style.display = 'none';
-    document.getElementById('actionsContainer').style.display = 'none';
-    document.getElementById('addProjectForm').style.display = 'none';
-    document.getElementById('editProjectForm').style.display = 'none';
-    document.getElementById('tutorialContainer').style.display = 'none';
-    document.getElementById('typeFilterContainer').style.display = 'none';
-    document.getElementById('projectsContainer').style.display = 'none';
-    document.getElementById('pendingUsersContainer').style.display = 'none';
-    document.getElementById('publicContainer').style.display = 'none';
-    document.getElementById('userProjectsContainer').style.display = 'none';
-    document.getElementById('publicProjectsPreview').style.display = 'none';
-}
-
-// Function to go back to the previous page
-function goBack() {
-    if (historyStack.length <= 1) {
-        return;
+    document.getElementById('profile').style.display = 'block';
+    document.getElementById('logoutButton').style.display = 'block';
+    document.getElementById('actionsContainer').style.display = 'block';
+    if (userData.isAdmin) {
+      document.getElementById('pendingUsersButton').style.display = 'block';
     }
-    historyStack.pop();
-    const previousPage = historyStack[historyStack.length - 1];
-    hideAllContainers();
-    document.getElementById('backButton').style.display = historyStack.length > 1 ? 'block' : 'none';
-
-    switch (previousPage) {
-        case 'login':
-            showLogin();
-            break;
-        case 'register':
-            showRegisterForm();
-            break;
-        case 'forgotPassword':
-            showForgotPassword();
-            break;
-        case 'actions':
-            document.getElementById('actionsContainer').style.display = 'block';
-            document.getElementById('profile').style.display = 'block';
-            document.getElementById('logoutButton').style.display = 'block';
-            break;
-        case 'addProject':
-            showAddProjectForm();
-            break;
-        case 'editProject':
-            document.getElementById('editProjectForm').style.display = 'block';
-            break;
-        case 'tutorial':
-            document.getElementById('tutorialContainer').style.display = 'block';
-            break;
-        case 'projects':
-            showProjects();
-            break;
-        case 'pendingUsers':
-            showPendingUsers();
-            break;
-        case 'public':
-            showPublicProjects();
-            break;
-        case 'userProjects':
-            showUserProjects();
-            break;
+    window.location.href = userData.isAdmin ? '/admin.html' : '/user.html';
+  } catch (error) {
+    console.error('Error logging in:', error);
+    let message = 'Login failed: ';
+    switch (error.code) {
+      case 'auth/invalid-email':
+        message += 'Invalid email format';
+        break;
+      case 'auth/user-not-found':
+      case 'auth/wrong-password':
+        message += 'Incorrect email or password';
+        break;
+      case 'auth/too-many-requests':
+        message += 'Too many attempts, try again later';
+        break;
+      default:
+        message += error.message;
     }
-}
+    document.getElementById('loginMessage').textContent = message;
+  }
+};
 
-// Function to show login form
-function showLogin() {
-    hideAllContainers();
-    document.getElementById('loginContainer').style.display = 'block';
-    document.getElementById('publicProjectsPreview').style.display = 'block';
-    document.getElementById('backButton').style.display = 'none';
+// Fungsi Logout
+window.logout = async function logout() {
+  try {
+    await auth.signOut();
+    localStorage.removeItem('user');
     document.getElementById('profile').style.display = 'none';
     document.getElementById('logoutButton').style.display = 'none';
-    currentUser = '';
-    isAdmin = false;
-    currentUserData = null;
-    localStorage.removeItem('currentUser');
-    historyStack = ['login'];
-    displayPublicProjectsPreview();
-}
+    document.getElementById('actionsContainer').style.display = 'none';
+    document.getElementById('pendingUsersButton').style.display = 'none';
+    document.getElementById('loginContainer').style.display = 'block';
+    window.location.href = '/';
+  } catch (error) {
+    console.error('Error logging out:', error);
+    alert('Error logging out: ' + error.message);
+  }
+};
 
-// Function to logout
-function logout() {
+// Fungsi Register
+window.register = async function register() {
+  try {
+    const username = document.getElementById('registerUsername').value.trim();
+    const email = document.getElementById('registerEmail').value.trim();
+    const password = document.getElementById('registerPassword').value.trim();
+    const registerMessage = document.getElementById('registerMessage');
+    registerMessage.textContent = '';
+
+    if (!username || !email || !password) {
+      registerMessage.textContent = 'Please fill all fields';
+      return;
+    }
+
+    if (username.length < 3) {
+      registerMessage.textContent = 'Username must be at least 3 characters';
+      return;
+    }
+
+    if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+      registerMessage.textContent = 'Please enter a valid email';
+      return;
+    }
+
+    if (password.length < 6) {
+      registerMessage.textContent = 'Password must be at least 6 characters';
+      return;
+    }
+
+    console.log('Register attempt:', { username, email });
+    // Tambah ke pendingUsers
+    await db.collection('pendingUsers').add({
+      username,
+      email,
+      password,
+      isAdmin: false,
+      allowedTools: false,
+      createdAt: { timestamp: new Date().toISOString() }
+    });
+    alert('Registration submitted, awaiting admin approval');
     showLogin();
-    document.getElementById('loginMessage').textContent = '';
-    document.getElementById('username').value = '';
-    document.getElementById('password').value = '';
-}
+  } catch (error) {
+    console.error('Error registering:', error);
+    document.getElementById('registerMessage').textContent = 'Error: ' + error.message;
+  }
+};
 
-// Function to show register form
-function showRegisterForm() {
-    hideAllContainers();
-    document.getElementById('registerContainer').style.display = 'block';
-    document.getElementById('publicProjectsPreview').style.display = 'block';
-    historyStack.push('register');
-    document.getElementById('backButton').style.display = 'block';
-}
+// Fungsi Reset Password
+window.resetPassword = async function resetPassword() {
+  try {
+    const email = document.getElementById('resetEmail').value.trim();
+    const resetMessage = document.getElementById('resetMessage');
+    resetMessage.textContent = '';
 
-// Function to show forgot password form
-function showForgotPassword() {
-    hideAllContainers();
-    document.getElementById('resetPasswordContainer').style.display = 'block';
-    document.getElementById('publicProjectsPreview').style.display = 'block';
-    historyStack.push('forgotPassword');
-    document.getElementById('backButton').style.display = 'block';
-}
-
-// Function to register
-async function register() {
-    const username = sanitizeInput(document.getElementById('registerUsername').value);
-    const password = document.getElementById('registerPassword').value;
-
-    if (!username || !password) {
-        alert('Please fill in all fields.');
-        return;
+    if (!email) {
+      resetMessage.textContent = 'Please enter your email';
+      return;
     }
 
-    try {
-        // Cek apakah username sudah ada di users
-        let q = db.collection('users').where('username', '==', username);
-        let snapshot = await q.get();
-        if (!snapshot.empty) {
-            alert('Username already taken.');
-            return;
-        }
-
-        // Cek apakah username sudah ada di pendingUsers
-        q = db.collection('pendingUsers').where('username', '==', username);
-        snapshot = await q.get();
-        if (!snapshot.empty) {
-            alert('Username already taken.');
-            return;
-        }
-
-        // Tambahkan ke pendingUsers
-        await db.collection('pendingUsers').add({
-            username,
-            password,
-            allowedTools: false,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-
-        alert('Registration successful! Please wait for admin approval.');
-        showLogin();
-    } catch (error) {
-        console.error('Error registering user:', error);
-        alert('Registration failed. Please try again.');
-    }
-}
-
-// Function to reset password
-async function resetPassword() {
-    const username = sanitizeInput(document.getElementById('resetUsername').value);
-    const newPassword = document.getElementById('newPassword').value;
-
-    if (!username || !newPassword) {
-        alert('Please fill in all fields.');
-        return;
+    if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+      resetMessage.textContent = 'Please enter a valid email';
+      return;
     }
 
-    try {
-        const q = db.collection('users').where('username', '==', username);
-        const snapshot = await q.get();
-        if (snapshot.empty) {
-            alert('Username not found.');
-            return;
-        }
-
-        const userDoc = snapshot.docs[0];
-        await db.collection('users').doc(userDoc.id).update({ password: newPassword });
-        alert('Password reset successfully! Please login with your new password.');
-        showLogin();
-    } catch (error) {
-        console.error('Error resetting password:', error);
-        alert('Failed to reset password.');
+    console.log('Reset password attempt:', { email });
+    await auth.sendPasswordResetEmail(email);
+    alert('Password reset email sent. Check your inbox.');
+    showLogin();
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    let message = 'Error: ';
+    switch (error.code) {
+      case 'auth/invalid-email':
+        message += 'Invalid email format';
+        break;
+      case 'auth/user-not-found':
+        message += 'Email not found';
+        break;
+      default:
+        message += error.message;
     }
-}
+    document.getElementById('resetMessage').textContent = message;
+  }
+};
 
-// Function to login
-async function login() {
-    const username = sanitizeInput(document.getElementById('username').value);
-    const password = document.getElementById('password').value;
-    const loginMessage = document.getElementById('loginMessage');
+// Fungsi Show/Hide Form
+window.showRegisterForm = function showRegisterForm() {
+  document.getElementById('loginContainer').style.display = 'none';
+  document.getElementById('registerContainer').style.display = 'block';
+  document.getElementById('resetPasswordContainer').style.display = 'none';
+  document.getElementById('loginMessage').textContent = '';
+};
 
-    try {
-        const q = db.collection('users').where('username', '==', username).where('password', '==', password);
-        const snapshot = await q.get();
-        if (!snapshot.empty) {
-            const user = snapshot.docs[0].data();
-            loginMessage.style.color = "lightgreen";
-            loginMessage.textContent = "Login successful!";
-            document.getElementById('loginContainer').style.display = 'none';
-            document.getElementById('publicProjectsPreview').style.display = 'none';
-            document.getElementById('actionsContainer').style.display = 'block';
-            isAdmin = user.isAdmin;
-            currentUser = username;
-            currentUserData = { ...user, id: snapshot.docs[0].id };
+window.showForgotPassword = function showForgotPassword() {
+  document.getElementById('loginContainer').style.display = 'none';
+  document.getElementById('registerContainer').style.display = 'none';
+  document.getElementById('resetPasswordContainer').style.display = 'block';
+  document.getElementById('loginMessage').textContent = '';
+};
 
-            localStorage.setItem('currentUser', currentUser);
-            document.getElementById('profile').style.display = 'block';
-            document.getElementById('logoutButton').style.display = 'block';
-            document.getElementById('profileUsername').textContent = currentUser;
-            document.getElementById('backButton').style.display = 'block';
+window.showLogin = function showLogin() {
+  document.getElementById('loginContainer').style.display = 'block';
+  document.getElementById('registerContainer').style.display = 'none';
+  document.getElementById('resetPasswordContainer').style.display = 'none';
+  document.getElementById('registerMessage').textContent = '';
+  document.getElementById('resetMessage').textContent = '';
+};
 
-            if (currentUser === "admin") {
-                document.getElementById('pendingUsersButton').style.display = 'inline-block';
-            }
-
-            updateToolsFilterButton();
-            historyStack.push('actions');
-        } else {
-            loginMessage.style.color = "red";
-            loginMessage.textContent = "Incorrect username or password.";
-        }
-    } catch (error) {
-        console.error('Error logging in:', error);
-        loginMessage.style.color = "red";
-        loginMessage.textContent = "Login failed. Please try again.";
-    }
-}
-
-// Function to show pending users and approved users (admin only)
-async function showPendingUsers() {
-    if (!isAdmin) {
-        alert('Access denied. Admin only.');
-        return;
-    }
-    hideAllContainers();
-    document.getElementById('pendingUsersContainer').style.display = 'block';
-    document.getElementById('backButton').style.display = 'block';
-    historyStack.push('pendingUsers');
-
-    const pendingUsersList = document.getElementById('pendingUsersList');
-    pendingUsersList.innerHTML = '';
-
-    try {
-        // Ambil pendingUsers
-        const pendingSnapshot = await db.collection('pendingUsers').get();
-        if (pendingSnapshot.empty) {
-            pendingUsersList.innerHTML = '<p>No pending registrations.</p>';
-        } else {
-            pendingSnapshot.forEach(doc => {
-                const user = doc.data();
-                const userDiv = document.createElement('div');
-                userDiv.classList.add('pending-user');
-                userDiv.innerHTML = `
-                    <span>${user.username}</span>
-                    <div>
-                        <button class="button approve-button" onclick="approveUser('${doc.id}')">Approve</button>
-                        <button class="button reject-button" onclick="rejectUser('${doc.id}')">Reject</button>
-                    </div>
-                `;
-                pendingUsersList.appendChild(userDiv);
-            });
-        }
-
-        // Ambil approved users
-        const approvedUsersList = document.getElementById('approvedUsersList');
-        approvedUsersList.innerHTML = '';
-        const q = db.collection('users').where('username', '!=', 'admin');
-        const approvedSnapshot = await q.get();
-        if (approvedSnapshot.empty) {
-            approvedUsersList.innerHTML = '<p>No approved users.</p>';
-        } else {
-            approvedSnapshot.forEach(doc => {
-                const user = doc.data();
-                const userDiv = document.createElement('div');
-                userDiv.classList.add('approved-user');
-                userDiv.innerHTML = `
-                    <span>${user.username} (Tools: ${user.allowedTools ? 'Allowed' : 'Not Allowed'})</span>
-                    <div>
-                        <button class="button approve-button" onclick="toggleToolsAccess('${doc.id}', true)">Allow Tools</button>
-                        <button class="button reject-button" onclick="toggleToolsAccess('${doc.id}', false)">Revoke Tools Access</button>
-                    </div>
-                `;
-                approvedUsersList.appendChild(userDiv);
-            });
-        }
-    } catch (error) {
-        console.error('Error showing pending users:', error);
-        alert('Failed to load users.');
-    }
-}
-
-// Function to approve a pending user
-async function approveUser(pendingUserId) {
-    try {
-        const pendingDoc = await db.collection('pendingUsers').doc(pendingUserId).get();
-        if (!pendingDoc.exists) {
-            alert('User not found.');
-            return;
-        }
-        const user = pendingDoc.data();
-
-        // Tambahkan ke users
-        await db.collection('users').add({
-            username: user.username,
-            password: user.password,
-            isAdmin: false,
-            allowedTools: false,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-
-        // Hapus dari pendingUsers
-        await db.collection('pendingUsers').doc(pendingUserId).delete();
-        alert(`User ${user.username} has been approved!`);
-        await showPendingUsers();
-    } catch (error) {
-        console.error('Error approving user:', error);
-        alert('Failed to approve user.');
-    }
-}
-
-// Function to reject a pending user
-async function rejectUser(pendingUserId) {
-    try {
-        const pendingDoc = await db.collection('pendingUsers').doc(pendingUserId).get();
-        if (!pendingDoc.exists) {
-            alert('User not found.');
-            return;
-        }
-        const user = pendingDoc.data();
-        await db.collection('pendingUsers').doc(pendingUserId).delete();
-        alert(`User ${user.username} has been rejected.`);
-        await showPendingUsers();
-    } catch (error) {
-        console.error('Error rejecting user:', error);
-        alert('Failed to reject user.');
-    }
-}
-
-// Function to toggle tools access for approved users
-async function toggleToolsAccess(userId, allow) {
-    try {
-        await db.collection('users').doc(userId).update({ allowedTools: allow });
-        if (currentUserData && userId === currentUserData.id) {
-            currentUserData.allowedTools = allow;
-            updateToolsFilterButton();
-        }
-        alert(`Tools access has been ${allow ? 'granted' : 'revoked'}.`);
-        await showPendingUsers();
-    } catch (error) {
-        console.error('Error toggling tools access:', error);
-        alert('Failed to toggle tools access.');
-    }
-}
-
-// Function to calculate days running and project status
-function calculateDaysAndStatus(project) {
-    const startDate = new Date(project.startDate);
-    const endDate = new Date(project.endDate);
-    const today = new Date();
-
-    if (project.status === "Ended") {
-        return { daysRunning: 0, status: "Ended" };
-    }
-
-    if (today > endDate) {
-        return { daysRunning: 0, status: "Ended" };
-    }
-
-    if (today >= startDate) {
-        const daysRunning = Math.ceil((today - startDate) / (1000 * 60 * 60 * 24));
-        return { daysRunning, status: "Ongoing" };
-    }
-
-    return { daysRunning: 0, status: "Not Started" };
-}
-
-// Function to show add project form
-function showAddProjectForm() {
-    hideAllContainers();
-    document.getElementById('addProjectForm').style.display = 'block';
-    document.getElementById('backButton').style.display = 'block';
-    historyStack.push('addProject');
-}
-
-// Function to show projects list
-async function showProjects() {
-    await loadProjects();
-    hideAllContainers();
-    document.getElementById('projectsContainer').style.display = 'grid';
-    document.getElementById('typeFilterContainer').style.display = 'flex';
-    document.getElementById('backButton').style.display = 'block';
-    historyStack.push('projects');
-    displayProjects(projects);
-}
-
-// Function to show project tutorial
-function showTutorial(projectId) {
-    const project = projects.find(p => p.id === projectId);
-    if (!project) {
-        alert('Project not found.');
-        return;
-    }
-    if (project.type === "Tools" && !currentUserData.allowedTools) {
-        alert("You are not authorized to view Tools projects. Please contact the admin to get access.");
-        return;
-    }
-    document.getElementById('tutorialProjectName').textContent = project.name;
-    document.getElementById('tutorialProjectLink').href = project.link;
-    document.getElementById('tutorialDescription').textContent = project.description;
-
-    hideAllContainers();
-    document.getElementById('tutorialContainer').style.display = 'block';
-    document.getElementById('backButton').style.display = 'block';
-    historyStack.push('tutorial');
-}
-
-// Function to show user projects
-async function showUserProjects() {
-    await loadProjects();
-    hideAllContainers();
-    document.getElementById('userProjectsContainer').style.display = 'grid';
-    document.getElementById('backButton').style.display = 'block';
-    historyStack.push('userProjects');
-
-    const userProjectsList = document.getElementById('userProjectsList');
-    userProjectsList.innerHTML = '';
-
-    let userProjects = projects.filter(project => project.addedBy === currentUser);
-
-    if (userProjects.length === 0) {
-        userProjectsList.innerHTML = '<p>You have not added any projects.</p>';
-        return;
-    }
-
-    userProjects.forEach(project => {
-        const { daysRunning, status } = calculateDaysAndStatus(project);
-        project.daysRunning = daysRunning;
-        project.status = status;
-
-        const projectBox = document.createElement('div');
-        projectBox.classList.add('box');
-        if (project.type === "Tools" && !currentUserData.allowedTools) {
-            projectBox.classList.add('disabled');
-        } else {
-            projectBox.onclick = () => showTutorial(project.id);
-        }
-        let projectDetails = `
-            <img src="${project.image}" alt="${project.name}">
-            <h3>${project.name}</h3>
-            <div class="project-details">
-                <div><label>Type:</label><span class="value">${project.type}</span></div>
-                <div><label>Link:</label><a href="#" onclick="showTutorial('${project.id}'); return false;" class="value">Project Link</a></div>
-                <div><label>Start Date:</label><span class="value">${project.startDate}</span></div>
-                <div><label>End Date:</label><span class="value">${project.endDate}</span></div>
-                <div><label>Status:</label><span class="value">${project.status}</span></div>
-        `;
-
-        if (project.status !== "Ended") {
-            projectDetails += `
-                <div><label>Running:</label><span class="value">${project.daysRunning} days</span></div>
-            `;
-        }
-
-        projectDetails += `
-                <div><label>Added by:</label><span class="value">${project.addedBy}</span></div>
-                <div><label>Public Status:</label><span class="value">${project.approvedByAdmin ? 'Approved' : 'Not Approved'}</span></div>
-            </div>
-        `;
-
-        projectBox.innerHTML = projectDetails;
-
-        if (isAdmin || project.addedBy === currentUser) {
-            projectBox.innerHTML += `
-                <button class="button edit-button" onclick="showEditProjectForm('${project.id}')">Edit</button>
-            `;
-        }
-
-        if (isAdmin) {
-            projectBox.innerHTML += `
-                <button class="button delete-button" onclick="deleteProject('${project.id}')">Delete</button>
-                ${!project.approvedByAdmin ? `<button class="button approve-button" onclick="approveProjectForPublic('${project.id}')">Approve for Public</button>` : `<button class="button reject-button" onclick="revokeProjectApproval('${project.id}')">Revoke Public Approval</button>`}
-            `;
-        }
-
-        userProjectsList.appendChild(projectBox);
-    });
-}
-
-// Function to display public projects preview
-async function displayPublicProjectsPreview() {
-    await loadProjects();
-    const publicProjectsList = document.getElementById('publicProjectsList');
-    publicProjectsList.innerHTML = '';
-
-    let publicProjects = projects.filter(project => project.approvedByAdmin);
-
-    if (publicProjects.length === 0) {
-        publicProjectsList.innerHTML = '<p>No public projects available.</p>';
-        return;
-    }
-
-    publicProjects.forEach(project => {
-        const { daysRunning, status } = calculateDaysAndStatus(project);
-        project.daysRunning = daysRunning;
-        project.status = status;
-
-        const projectBox = document.createElement('div');
-        projectBox.classList.add('box');
-        if (project.type === "Tools" && currentUser && !currentUserData.allowedTools) {
-            projectBox.classList.add('disabled');
-        } else {
-            projectBox.onclick = () => {
-                if (!currentUser) {
-                    alert('Please login or register to view project details.');
-                } else {
-                    showTutorial(project.id);
-                }
-            };
-        }
-        let projectDetails = `
-            <img src="${project.image}" alt="${project.name}">
-            <h3>${project.name}</h3>
-            <div class="project-details">
-                <div><label>Type:</label><span class="value">${project.type}</span></div>
-                <div><label>Start Date:</label><span class="value">${project.startDate}</span></div>
-                <div><label>End Date:</label><span class="value">${project.endDate}</span></div>
-                <div><label>Status:</label><span class="value">${project.status}</span></div>
-        `;
-
-        if (project.status !== "Ended") {
-            projectDetails += `
-                <div><label>Running:</label><span class="value">${project.daysRunning} days</span></div>
-            `;
-        }
-
-        projectDetails += `
-                <div><label>Added by:</label><span class="value">${project.addedBy}</span></div>
-            </div>
-        `;
-
-        projectBox.innerHTML = projectDetails;
-        publicProjectsList.appendChild(projectBox);
-    });
-}
-
-// Function to show public projects
-async function showPublicProjects() {
-    await loadProjects();
-    hideAllContainers();
-    document.getElementById('publicContainer').style.display = 'block';
-    document.getElementById('backButton').style.display = 'block';
-    historyStack.push('public');
-
-    const publicProjectsList = document.getElementById('publicProjectsList');
-    publicProjectsList.innerHTML = '';
-
-    let publicProjects = projects.filter(project => project.approvedByAdmin);
-
-    if (publicProjects.length === 0) {
-        publicProjectsList.innerHTML = '<p>No public projects available.</p>';
-        return;
-    }
-
-    publicProjects.forEach(project => {
-        const { daysRunning, status } = calculateDaysAndStatus(project);
-        project.daysRunning = daysRunning;
-        project.status = status;
-
-        const projectBox = document.createElement('div');
-        projectBox.classList.add('box');
-        if (project.type === "Tools" && !currentUserData.allowedTools) {
-            projectBox.classList.add('disabled');
-        } else {
-            projectBox.onclick = () => showTutorial(project.id);
-        }
-        let projectDetails = `
-            <img src="${project.image}" alt="${project.name}">
-            <h3>${project.name}</h3>
-            <div class="project-details">
-                <div><label>Type:</label><span class="value">${project.type}</span></div>
-                <div><label>Link:</label><a href="${project.link}" target="_blank" class="value">Project Link</a></div>
-                <div><label>Start Date:</label><span class="value">${project.startDate}</span></div>
-                <div><label>End Date:</label><span class="value">${project.endDate}</span></div>
-                <div><label>Status:</label><span class="value">${project.status}</span></div>
-        `;
-
-        if (project.status !== "Ended") {
-            projectDetails += `
-                <div><label>Running:</label><span class="value">${project.daysRunning} days</span></div>
-            `;
-        }
-
-        projectDetails += `
-                <div><label>Added by:</label><span class="value">${project.addedBy}</span></div>
-            </div>
-        `;
-
-        projectBox.innerHTML = projectDetails;
-        publicProjectsList.appendChild(projectBox);
-    });
-}
-
-// Function to add a new project
-async function addProject() {
-    const projectName = sanitizeInput(document.getElementById('projectName').value);
+// Fungsi Add Project
+window.addProject = async function addProject() {
+  try {
+    const projectName = document.getElementById('projectName').value.trim();
     const projectType = document.getElementById('projectType').value;
-    const projectLink = document.getElementById('projectLink').value;
-    const projectDescription = sanitizeInput(document.getElementById('projectDescription').value);
+    const projectLink = document.getElementById('projectLink').value.trim();
+    const projectDescription = document.getElementById('projectDescription').value.trim();
     const startDate = document.getElementById('startDate').value;
     const endDate = document.getElementById('endDate').value;
-    const projectImage = document.getElementById('projectImage').files[0];
+    const addProjectMessage = document.getElementById('addProjectMessage');
+    addProjectMessage.textContent = '';
 
-    if (!projectName || !projectType || !projectLink || !projectDescription || !startDate || !endDate || !projectImage) {
-        alert('Please fill in all fields.');
-        return;
+    const user = auth.currentUser;
+    if (!user) {
+      addProjectMessage.textContent = 'Please login first';
+      showLogin();
+      return;
     }
 
-    if (projectType === "Tools" && !currentUserData.allowedTools) {
-        alert("You are not authorized to create Tools projects. Please contact the admin to get access.");
-        return;
+    const userDoc = await db.collection('users').doc(user.uid).get();
+    if (!userDoc.exists) {
+      addProjectMessage.textContent = 'User data not found';
+      await auth.signOut();
+      return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = async function () {
-        try {
-            const newProject = {
-                name: projectName,
-                type: projectType,
-                link: projectLink,
-                description: projectDescription,
-                startDate: startDate,
-                endDate: endDate,
-                image: reader.result,
-                addedBy: currentUser,
-                status: "Not Started",
-                daysRunning: 0,
-                approvedByAdmin: false,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            };
+    const userData = userDoc.data();
+    if (!projectName || !projectType || !projectLink || !projectDescription || !startDate || !endDate) {
+      addProjectMessage.textContent = 'Please fill all fields';
+      return;
+    }
 
-            await db.collection('projects').add(newProject);
-            alert('Project added successfully!');
-            showProjects();
-        } catch (error) {
-            console.error('Error adding project:', error);
-            alert('Failed to add project.');
-        }
+    if (!projectLink.match(/^https?:\/\/.+/)) {
+      addProjectMessage.textContent = 'Please enter a valid URL';
+      return;
+    }
+
+    const projectData = {
+      name: projectName,
+      type: projectType,
+      link: projectLink,
+      description: projectDescription,
+      startDate,
+      endDate,
+      status: 'Berjalan',
+      addedBy: userData.username,
+      createdAt: { timestamp: new Date().toISOString() }
     };
 
-    reader.readAsDataURL(projectImage);
+    await db.collection('projects').add(projectData);
+    alert('Project added successfully');
+    showProjects();
+  } catch (error) {
+    console.error('Error adding project:', error);
+    document.getElementById('addProjectMessage').textContent = 'Error: ' + error.message;
+  }
+};
+
+// Fungsi Show Projects
+window.showProjects = function showProjects() {
+  document.getElementById('actionsContainer').style.display = 'block';
+  document.getElementById('addProjectForm').style.display = 'none';
+  document.getElementById('editProjectForm').style.display = 'none';
+  document.getElementById('tutorialContainer').style.display = 'none';
+  document.getElementById('publicContainer').style.display = 'none';
+  document.getElementById('userProjectsContainer').style.display = 'none';
+  document.getElementById('pendingUsersContainer').style.display = 'none';
+  document.getElementById('typeFilterContainer').style.display = 'block';
+  document.getElementById('projectsContainer').style.display = 'grid';
+  loadProjects();
+};
+
+// Fungsi Load Projects
+async function loadProjects(type = '') {
+  try {
+    const projectsContainer = document.getElementById('projectsContainer');
+    projectsContainer.innerHTML = '';
+    let q = db.collection('projects');
+    if (type) {
+      q = q.where('type', '==', type);
+    }
+    const snapshot = await q.get();
+    if (snapshot.empty) {
+      projectsContainer.innerHTML = '<p>No projects found</p>';
+      return;
+    }
+    snapshot.forEach(doc => {
+      const project = doc.data();
+      const div = document.createElement('div');
+      div.className = 'box';
+      div.innerHTML = `
+        <h3>${project.name}</h3>
+        <div class="project-details">
+          <div><label>Type:</label><span class="value">${project.type}</span></div>
+          <div><label>Status:</label><span class="value">${project.status}</span></div>
+          <div><label>Added By:</label><span class="value">${project.addedBy}</span></div>
+        </div>
+        <button class="edit-button" onclick="showEditProjectForm('${doc.id}')">Edit</button>
+        <button class="delete-button" onclick="deleteProject('${doc.id}')">Delete</button>
+        <button class="button" onclick="showTutorial('${doc.id}')">View Tutorial</button>
+      `;
+      projectsContainer.appendChild(div);
+    });
+  } catch (error) {
+    console.error('Error loading projects:', error);
+    alert('Failed to load projects: ' + error.message);
+  }
 }
 
-// Function to show edit project form
-async function showEditProjectForm(projectId) {
-    const project = projects.find(p => p.id === projectId);
-    if (!project) {
-        alert('Project not found.');
-        return;
-    }
-    if (project.type === "Tools" && !currentUserData.allowedTools) {
-        alert("You are not authorized to edit Tools projects. Please contact the admin to get access.");
-        return;
-    }
-    editingProjectId = projectId;
+// Fungsi Filter Projects by Type
+window.filterProjectsByType = function filterProjectsByType(type) {
+  loadProjects(type);
+};
 
+// Fungsi Show Edit Project Form
+window.showEditProjectForm = async function showEditProjectForm(projectId) {
+  try {
+    const doc = await db.collection('projects').doc(projectId).get();
+    if (!doc.exists) {
+      alert('Project not found');
+      return;
+    }
+    const project = doc.data();
     document.getElementById('editProjectName').value = project.name;
     document.getElementById('editProjectType').value = project.type;
     document.getElementById('editProjectLink').value = project.link;
     document.getElementById('editProjectDescription').value = project.description;
     document.getElementById('editStartDate').value = project.startDate;
     document.getElementById('editEndDate').value = project.endDate;
-    document.getElementById('editProjectStatus').value = project.status === "Not Started" || project.status === "Ongoing" ? "Berjalan" : "End";
-
-    hideAllContainers();
+    document.getElementById('editProjectStatus').value = project.status;
+    document.getElementById('editProjectForm').dataset.projectId = projectId;
+    document.getElementById('projectsContainer').style.display = 'none';
     document.getElementById('editProjectForm').style.display = 'block';
-    document.getElementById('backButton').style.display = 'block';
-    historyStack.push('editProject');
-}
+    document.getElementById('editProjectMessage').textContent = '';
+  } catch (error) {
+    console.error('Error loading project:', error);
+    alert('Failed to load project: ' + error.message);
+  }
+};
 
-// Function to save project changes
-async function updateProject() {
-    const projectName = sanitizeInput(document.getElementById('editProjectName').value);
+// Fungsi Update Project
+window.updateProject = async function updateProject() {
+  try {
+    const projectId = document.getElementById('editProjectForm').dataset.projectId;
+    const projectName = document.getElementById('editProjectName').value.trim();
     const projectType = document.getElementById('editProjectType').value;
-    const projectLink = document.getElementById('editProjectLink').value;
-    const projectDescription = sanitizeInput(document.getElementById('editProjectDescription').value);
+    const projectLink = document.getElementById('editProjectLink').value.trim();
+    const projectDescription = document.getElementById('editProjectDescription').value.trim();
     const startDate = document.getElementById('editStartDate').value;
     const endDate = document.getElementById('editEndDate').value;
-    const projectStatus = document.getElementById('editProjectStatus').value;
-    const projectImage = document.getElementById('editProjectImage').files[0];
+    const status = document.getElementById('editProjectStatus').value;
+    const editProjectMessage = document.getElementById('editProjectMessage');
+    editProjectMessage.textContent = '';
 
     if (!projectName || !projectType || !projectLink || !projectDescription || !startDate || !endDate) {
-        alert('Please fill in all fields.');
-        return;
+      editProjectMessage.textContent = 'Please fill all fields';
+      return;
     }
 
-    if (projectType === "Tools" && !currentUserData.allowedTools) {
-        alert("You are not authorized to create or edit Tools projects. Please contact the admin to get access.");
-        return;
+    if (!projectLink.match(/^https?:\/\/.+/)) {
+      editProjectMessage.textContent = 'Please enter a valid URL';
+      return;
     }
 
-    try {
-        const projectRef = db.collection('projects').doc(editingProjectId);
-        const project = projects.find(p => p.id === editingProjectId);
-
-        const updatedProject = {
-            name: projectName,
-            type: projectType,
-            link: projectLink,
-            description: projectDescription,
-            startDate: startDate,
-            endDate: endDate,
-            status: projectStatus === "Berjalan" ? "Ongoing" : "Ended",
-            image: project.image,
-            addedBy: project.addedBy,
-            daysRunning: projectStatus === "End" ? 0 : project.daysRunning,
-            approvedByAdmin: project.approvedByAdmin,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        };
-
-        if (projectImage) {
-            const reader = new FileReader();
-            reader.onloadend = async function () {
-                updatedProject.image = reader.result;
-                await projectRef.update(updatedProject);
-                alert('Project updated successfully!');
-                showProjects();
-            };
-            reader.readAsDataURL(projectImage);
-        } else {
-            await projectRef.update(updatedProject);
-            alert('Project updated successfully!');
-            showProjects();
-        }
-    } catch (error) {
-        console.error('Error updating project:', error);
-        alert('Failed to update project.');
-    }
-}
-
-// Function to delete a project (admin only)
-async function deleteProject(projectId) {
-    if (confirm('Are you sure you want to delete this project?')) {
-        try {
-            await db.collection('projects').doc(projectId).delete();
-            alert('Project deleted successfully!');
-            showProjects();
-        } catch (error) {
-            console.error('Error deleting project:', error);
-            alert('Failed to delete project.');
-        }
-    }
-}
-
-// Function to approve project for public (admin only)
-async function approveProjectForPublic(projectId) {
-    try {
-        await db.collection('projects').doc(projectId).update({ approvedByAdmin: true });
-        alert('Project has been approved for public!');
-        showProjects();
-    } catch (error) {
-        console.error('Error approving project:', error);
-        alert('Failed to approve project.');
-    }
-}
-
-// Function to revoke public approval (admin only)
-async function revokeProjectApproval(projectId) {
-    try {
-        await db.collection('projects').doc(projectId).update({ approvedByAdmin: false });
-        alert('Public approval for the project has been revoked!');
-        showProjects();
-    } catch (error) {
-        console.error('Error revoking project approval:', error);
-        alert('Failed to revoke project approval.');
-    }
-}
-
-// Function to display projects
-function displayProjects(projectsToDisplay) {
-    const projectsContainer = document.getElementById('projectsContainer');
-    projectsContainer.innerHTML = '';
-
-    projectsToDisplay.forEach(project => {
-        const { daysRunning, status } = calculateDaysAndStatus(project);
-        project.daysRunning = daysRunning;
-        project.status = status;
-
-        const projectBox = document.createElement('div');
-        projectBox.classList.add('box');
-        if (project.type === "Tools" && !currentUserData.allowedTools) {
-            projectBox.classList.add('disabled');
-        } else {
-            projectBox.onclick = () => showTutorial(project.id);
-        }
-        let projectDetails = `
-            <img src="${project.image}" alt="${project.name}">
-            <h3>${project.name}</h3>
-            <div class="project-details">
-                <div><label>Type:</label><span class="value">${project.type}</span></div>
-                <div><label>Link:</label><a href="#" onclick="showTutorial('${project.id}'); return false;" class="value">Project Link</a></div>
-                <div><label>Start Date:</label><span class="value">${project.startDate}</span></div>
-                <div><label>End Date:</label><span class="value">${project.endDate}</span></div>
-                <div><label>Status:</label><span class="value">${project.status}</span></div>
-        `;
-
-        if (project.status !== "Ended") {
-            projectDetails += `
-                <div><label>Running:</label><span class="value">${project.daysRunning} days</span></div>
-            `;
-        }
-
-        projectDetails += `
-                <div><label>Added by:</label><span class="value">${project.addedBy}</span></div>
-                <div><label>Public Status:</label><span class="value">${project.approvedByAdmin ? 'Approved' : 'Not Approved'}</span></div>
-            </div>
-        `;
-
-        projectBox.innerHTML = projectDetails;
-
-        if (isAdmin || project.addedBy === currentUser) {
-            projectBox.innerHTML += `
-                <button class="button edit-button" onclick="showEditProjectForm('${project.id}')">Edit</button>
-            `;
-        }
-
-        if (isAdmin) {
-            projectBox.innerHTML += `
-                <button class="button delete-button" onclick="deleteProject('${project.id}')">Delete</button>
-                ${!project.approvedByAdmin ? `<button class="button approve-button" onclick="approveProjectForPublic('${project.id}')">Approve for Public</button>` : `<button class="button reject-button" onclick="revokeProjectApproval('${project.id}')">Revoke Public Approval</button>`}
-            `;
-        }
-
-        projectsContainer.appendChild(projectBox);
+    await db.collection('projects').doc(projectId).update({
+      name: projectName,
+      type: projectType,
+      link: projectLink,
+      description: projectDescription,
+      startDate,
+      endDate,
+      status
     });
-}
+    alert('Project updated successfully');
+    showProjects();
+  } catch (error) {
+    console.error('Error updating project:', error);
+    document.getElementById('editProjectMessage').textContent = 'Error: ' + error.message;
+  }
+};
 
-// Function to filter projects by type
-async function filterProjectsByType(type) {
-    await loadProjects();
-    let filteredProjects = projects;
+// Fungsi Delete Project
+window.deleteProject = async function deleteProject(projectId) {
+  if (!confirm('Are you sure you want to delete this project?')) return;
+  try {
+    await db.collection('projects').doc(projectId).delete();
+    alert('Project deleted successfully');
+    loadProjects();
+  } catch (error) {
+    console.error('Error deleting project:', error);
+    alert('Error deleting project: ' + error.message);
+  }
+};
 
-    if (type === "Tools" && !currentUserData.allowedTools) {
-        alert("You are not authorized to view Tools projects. Please contact the admin to get access.");
-        return;
+// Fungsi Show Tutorial
+window.showTutorial = async function showTutorial(projectId) {
+  try {
+    const doc = await db.collection('projects').doc(projectId).get();
+    if (!doc.exists) {
+      alert('Project not found');
+      return;
+    }
+    const project = doc.data();
+    document.getElementById('tutorialProjectName').textContent = project.name;
+    document.getElementById('tutorialProjectLink').href = project.link;
+    document.getElementById('tutorialProjectLink').textContent = project.link;
+    document.getElementById('tutorialDescription').textContent = project.description;
+    document.getElementById('projectsContainer').style.display = 'none';
+    document.getElementById('tutorialContainer').style.display = 'block';
+  } catch (error) {
+    console.error('Error loading tutorial:', error);
+    alert('Failed to load tutorial: ' + error.message);
+  }
+};
+
+// Fungsi Show Pending Users
+window.showPendingUsers = async function showPendingUsers() {
+  try {
+    const user = auth.currentUser;
+    const manageUsersMessage = document.getElementById('manageUsersMessage');
+    manageUsersMessage.textContent = '';
+
+    if (!user) {
+      manageUsersMessage.textContent = 'Please login first';
+      showLogin();
+      return;
     }
 
-    if (type !== 'all') {
-        filteredProjects = projects.filter(project => project.type === type);
+    const userDoc = await db.collection('users').doc(user.uid).get();
+    if (!userDoc.exists || !userDoc.data().isAdmin) {
+      console.error('Access denied: Not an admin or user data not found');
+      manageUsersMessage.textContent = 'Access denied: Admins only';
+      showProjects();
+      return;
     }
 
-    displayProjects(filteredProjects);
+    console.log('Fetching pending users for admin:', userDoc.data().username);
+    document.getElementById('actionsContainer').style.display = 'none';
+    document.getElementById('pendingUsersContainer').style.display = 'block';
+    const pendingUsersList = document.getElementById('pendingUsersList');
+    const approvedUsersList = document.getElementById('approvedUsersList');
+    pendingUsersList.innerHTML = '';
+    approvedUsersList.innerHTML = '';
+
+    // Load pending users
+    const pendingSnapshot = await db.collection('pendingUsers').get();
+    console.log('Pending users snapshot size:', pendingSnapshot.size);
+    if (pendingSnapshot.empty) {
+      pendingUsersList.innerHTML = '<p>No pending users</p>';
+    } else {
+      pendingSnapshot.forEach(doc => {
+        const userData = doc.data();
+        const div = document.createElement('div');
+        div.className = 'pending-user';
+        div.innerHTML = `
+          <span>${userData.username} (${userData.email})</span>
+          <div>
+            <button class="approve-button" onclick="approveUser('${doc.id}')">Approve</button>
+            <button class="reject-button" onclick="rejectUser('${doc.id}')">Reject</button>
+          </div>
+        `;
+        pendingUsersList.appendChild(div);
+      });
+    }
+
+    // Load approved users
+    const approvedSnapshot = await db.collection('users').get();
+    console.log('Approved users snapshot size:', approvedSnapshot.size);
+    if (approvedSnapshot.empty) {
+      approvedUsersList.innerHTML = '<p>No approved users</p>';
+    } else {
+      approvedSnapshot.forEach(doc => {
+        const userData = doc.data();
+        const div = document.createElement('div');
+        div.className = 'approved-user';
+        div.innerHTML = `
+          <span>${userData.username} (${userData.email})</span>
+          <div>
+            <button class="button" onclick="toggleToolsAccess('${doc.id}', ${!userData.allowedTools})">
+              ${userData.allowedTools ? 'Disable Tools' : 'Enable Tools'}
+            </button>
+            <button class="remove-button" onclick="removeUser('${doc.id}', '${userData.username}')">Remove</button>
+          </div>
+        `;
+        approvedUsersList.appendChild(div);
+      });
+    }
+  } catch (error) {
+    console.error('Error showing pending users:', error);
+    document.getElementById('manageUsersMessage').textContent = 'Error: ' + error.message;
+  }
+};
+
+// Fungsi Approve User
+window.approveUser = async function approveUser(pendingUserId) {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      alert('Please login first');
+      return;
+    }
+
+    const adminDoc = await db.collection('users').doc(user.uid).get();
+    if (!adminDoc.exists || !adminDoc.data().isAdmin) {
+      alert('Access denied: Admins only');
+      return;
+    }
+
+    const doc = await db.collection('pendingUsers').doc(pendingUserId).get();
+    if (!doc.exists) {
+      alert('User not found');
+      return;
+    }
+
+    const userData = doc.data();
+    // Buat user di Firebase Authentication
+    const userCredential = await auth.createUserWithEmailAndPassword(userData.email, userData.password);
+    const newUser = userCredential.user;
+
+    // Simpan data user ke Firestore
+    await db.collection('users').doc(newUser.uid).set({
+      username: userData.username,
+      email: userData.email,
+      isAdmin: false,
+      allowedTools: false,
+      createdAt: userData.createdAt
+    });
+
+    // Hapus dari pendingUsers
+    await db.collection('pendingUsers').doc(pendingUserId).delete();
+    alert('User approved successfully');
+    showPendingUsers();
+  } catch (error) {
+    console.error('Error approving user:', error);
+    document.getElementById('manageUsersMessage').textContent = 'Error: ' + error.message;
+  }
+};
+
+// Fungsi Reject User
+window.rejectUser = async function rejectUser(pendingUserId) {
+  if (!confirm('Are you sure you want to reject this user?')) return;
+  try {
+    await db.collection('pendingUsers').doc(pendingUserId).delete();
+    alert('User rejected successfully');
+    showPendingUsers();
+  } catch (error) {
+    console.error('Error rejecting user:', error);
+    document.getElementById('manageUsersMessage').textContent = 'Error: ' + error.message;
+  }
+};
+
+// Fungsi Remove User
+window.removeUser = async function removeUser(userId, username) {
+  if (!confirm(`Are you sure you want to remove user ${username}? This action cannot be undone.`)) return;
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      alert('Please login first');
+      return;
+    }
+
+    const adminDoc = await db.collection('users').doc(user.uid).get();
+    if (!adminDoc.exists || !adminDoc.data().isAdmin) {
+      alert('Access denied: Admins only');
+      return;
+    }
+
+    if (user.uid === userId) {
+      alert('You cannot remove your own account');
+      return;
+    }
+
+    // Hapus data user dari Firestore
+    await db.collection('users').doc(userId).delete();
+    alert(`User ${username} removed successfully`);
+
+    // Catatan: Menghapus user dari Firebase Authentication memerlukan Admin SDK.
+    // Untuk keamanan, kita hanya hapus dari Firestore di sini.
+    // Jika ingin hapus dari Auth, gunakan Firebase Admin SDK di backend.
+    showPendingUsers();
+  } catch (error) {
+    console.error('Error removing user:', error);
+    document.getElementById('manageUsersMessage').textContent = 'Error: ' + error.message;
+  }
+};
+
+// Fungsi Toggle Tools Access
+window.toggleToolsAccess = async function toggleToolsAccess(userId, allowedTools) {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      alert('Please login first');
+      return;
+    }
+
+    const adminDoc = await db.collection('users').doc(user.uid).get();
+    if (!adminDoc.exists || !adminDoc.data().isAdmin) {
+      alert('Access denied: Admins only');
+      return;
+    }
+
+    await db.collection('users').doc(userId).update({ allowedTools });
+    alert('Tools access updated successfully');
+    showPendingUsers();
+  } catch (error) {
+    console.error('Error updating tools access:', error);
+    document.getElementById('manageUsersMessage').textContent = 'Error: ' + error.message;
+  }
+};
+
+// Fungsi Show User Projects
+window.showUserProjects = async function showUserProjects() {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      alert('Please login first');
+      showLogin();
+      return;
+    }
+
+    const userDoc = await db.collection('users').doc(user.uid).get();
+    if (!userDoc.exists) {
+      alert('User data not found');
+      await auth.signOut();
+      return;
+    }
+
+    const userData = userDoc.data();
+    document.getElementById('actionsContainer').style.display = 'none';
+    document.getElementById('userProjectsContainer').style.display = 'block';
+    const userProjectsList = document.getElementById('userProjectsList');
+    userProjectsList.innerHTML = '';
+    const snapshot = await db.collection('projects').where('addedBy', '==', userData.username).get();
+    if (snapshot.empty) {
+      userProjectsList.innerHTML = '<p>No projects found</p>';
+      return;
+    }
+    snapshot.forEach(doc => {
+      const project = doc.data();
+      const div = document.createElement('div');
+      div.className = 'box';
+      div.innerHTML = `
+        <h3>${project.name}</h3>
+        <div class="project-details">
+          <div><label>Type:</label><span class="value">${project.type}</span></div>
+          <div><label>Status:</label><span class="value">${project.status}</span></div>
+        </div>
+        <button class="button" onclick="showTutorial('${doc.id}')">View Tutorial</button>
+      `;
+      userProjectsList.appendChild(div);
+    });
+  } catch (error) {
+    console.error('Error loading user projects:', error);
+    alert('Failed to load user projects: ' + error.message);
+  }
+};
+
+// Fungsi Go Back
+window.goBack = function goBack() {
+  showProjects();
+};
+
+// Fungsi Show Add Project Form
+window.showAddProjectForm = function showAddProjectForm() {
+  document.getElementById('actionsContainer').style.display = 'none';
+  document.getElementById('addProjectForm').style.display = 'block';
+  document.getElementById('addProjectMessage').textContent = '';
+};
+
+// Load Public Projects on Page Load
+async function loadPublicProjects() {
+  try {
+    const publicProjectsList = document.getElementById('publicProjectsList');
+    publicProjectsList.innerHTML = '';
+    const snapshot = await db.collection('projects').where('status', '==', 'Berjalan').get();
+    if (snapshot.empty) {
+      publicProjectsList.innerHTML = '<p>No public projects</p>';
+      return;
+    }
+    snapshot.forEach(doc => {
+      const project = doc.data();
+      const div = document.createElement('div');
+      div.className = 'box';
+      div.innerHTML = `
+        <h3>${project.name}</h3>
+        <div class="project-details">
+          <div><label>Type:</label><span class="value">${project.type}</span></div>
+          <div><label>Added By:</label><span class="value">${project.addedBy}</span></div>
+        </div>
+        <button class="button" onclick="showTutorial('${doc.id}')">View Tutorial</button>
+      `;
+      publicProjectsList.appendChild(div);
+    });
+  } catch (error) {
+    console.error('Error loading public projects:', error);
+    alert('Failed to load public projects: ' + error.message);
+  }
 }
 
-// Expose functions to global scope
-window.register = register;
-window.login = login;
-window.logout = logout;
-window.showRegisterForm = showRegisterForm;
-window.showForgotPassword = showForgotPassword;
-window.resetPassword = resetPassword;
-window.showPendingUsers = showPendingUsers;
-window.approveUser = approveUser;
-window.rejectUser = rejectUser;
-window.toggleToolsAccess = toggleToolsAccess;
-window.showAddProjectForm = showAddProjectForm;
-window.showProjects = showProjects;
-window.showTutorial = showTutorial;
-window.showUserProjects = showUserProjects;
-window.displayPublicProjectsPreview = displayPublicProjectsPreview;
-window.showPublicProjects = showPublicProjects;
-window.addProject = addProject;
-window.showEditProjectForm = showEditProjectForm;
-window.updateProject = updateProject;
-window.deleteProject = deleteProject;
-window.approveProjectForPublic = approveProjectForPublic;
-window.revokeProjectApproval = revokeProjectApproval;
-window.filterProjectsByType = filterProjectsByType;
-window.goBack = goBack;
+// Inisialisasi
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    // Cek status autentikasi
+    auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        const userDoc = await db.collection('users').doc(user.uid).get();
+        if (!userDoc.exists) {
+          console.error('User data not found in Firestore');
+          await auth.signOut();
+          localStorage.removeItem('user');
+          showLogin();
+          return;
+        }
+
+        const userData = { id: user.uid, ...userDoc.data() };
+        localStorage.setItem('user', JSON.stringify(userData));
+        console.log('User loaded:', userData);
+        document.getElementById('profileUsername').textContent = userData.username;
+        document.getElementById('loginContainer').style.display = 'none';
+        document.getElementById('profile').style.display = 'block';
+        document.getElementById('logoutButton').style.display = 'block';
+        document.getElementById('actionsContainer').style.display = 'block';
+        if (userData.isAdmin) {
+          document.getElementById('pendingUsersButton').style.display = 'block';
+        }
+      } else {
+        console.log('No user signed in');
+        localStorage.removeItem('user');
+        showLogin();
+      }
+      loadPublicProjects();
+    });
+  } catch (error) {
+    console.error('Error initializing page:', error);
+    alert('Failed to initialize page: ' + error.message);
+  }
+});
